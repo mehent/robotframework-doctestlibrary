@@ -38,6 +38,7 @@ class CompareImage(object):
 
         self.placeholder_file = kwargs.pop('placeholder_file', None)
         self.mask = kwargs.pop('mask', None)
+        self.ocr_lang = kwargs.get('ocr_lang', 'eng')
         self.contains_barcodes = kwargs.pop('contains_barcodes', False)
         self.get_pdf_content = kwargs.pop('get_pdf_content', False)
         self.force_ocr = kwargs.pop('force_ocr', False)
@@ -65,6 +66,7 @@ class CompareImage(object):
         self.load_image_into_array()
         self.load_text_content_and_identify_masks()
         toc = time.perf_counter()
+        logging.debug(f'Ocr lang: {self.ocr_lang}')
         print(f"Compare Image Object created in {toc - tic:0.4f} seconds")
 
     def convert_mupdf_to_opencv_image(self, resolution=None):
@@ -96,7 +98,7 @@ class CompareImage(object):
     def get_text_content(self):
         for i in range(len(self.opencv_images)):
             cv_image = self.opencv_images[i]
-            text = pytesseract.image_to_string(cv_image)
+            text = pytesseract.image_to_string(cv_image, lang=self.ocr_lang)
             self.text_content.append(text)
         return self.text_content
 
@@ -113,10 +115,11 @@ class CompareImage(object):
 
             cv_image = self.opencv_images[i]
             gray_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-            threshold_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            # threshold_image = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            threshold_image = cv2.adaptiveThreshold(gray_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 4)
             ocr_config = ocr_config + f' -l {ocr_lang}'
-            d = pytesseract.image_to_data(threshold_image, output_type=Output.DICT, config=ocr_config)
-            n_boxes = len(d['text'])         
+            d = pytesseract.image_to_data(threshold_image, output_type=Output.DICT, config=ocr_config, lang=self.ocr_lang)
+            n_boxes = len(d['text'])
 
             # For each detected part
             for j in range(n_boxes):
@@ -177,7 +180,7 @@ class CompareImage(object):
         placeholders = None
         if self.placeholder_file is not None:
             try:
-                with open(self.placeholder_file, 'r') as f:
+                with open(self.placeholder_file, 'r', encoding='utf-8') as f:
                     placeholders = json.load(f)
             except IOError as err:
                 print("Placeholder File %s is not accessible", self.placeholder_file)
@@ -209,6 +212,7 @@ class CompareImage(object):
                                     placeholders.append({'page': 'all', 'type': 'area', 'location': location, 'percent': percent})
                                 else:
                                     print('The mask {} is not valid. The percent value is not a number'.format(mask))
+        logging.debug(placeholders)
         if (placeholders is not None):
             if isinstance(placeholders, list) is not True:
                 placeholders = [placeholders]
@@ -220,16 +224,16 @@ class CompareImage(object):
                     pattern = str(placeholder.get('pattern'))
                     xoffset = int(placeholder.get('xoffset', 0))
                     yoffset = int(placeholder.get('yoffset', 0))
-                    # print(pattern)
+                    logging.debug(pattern)
 
                     if self.mupdfdoc is None or self.force_ocr is True:
                         if self.ocr_performed is False:
                             if self.ocr_engine == 'tesseract':
-                                self.get_ocr_text_data()
+                                self.get_ocr_text_data(ocr_lang=self.ocr_lang)
                             elif self.ocr_engine == 'east':
                                 self.get_text_content_with_east()
                             else:
-                                self.get_ocr_text_data()
+                                self.get_ocr_text_data(ocr_lang=self.ocr_lang)
                         for i in range(len(self.opencv_images)):
                             d = self.text_content[i]
                             keys = list(d.keys())

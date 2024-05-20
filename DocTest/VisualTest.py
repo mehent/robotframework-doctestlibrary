@@ -89,7 +89,7 @@ class VisualTest(object):
             self.PABOTQUEUEINDEX = None
 
     @keyword
-    def compare_images(self, reference_image: str, test_image: str, placeholder_file: str=None, mask: Union[str, dict, list]=None, check_text_content: bool=False, move_tolerance: int=None, contains_barcodes: bool=False, get_pdf_content: bool=False, force_ocr: bool=False, DPI: int=None, watermark_file: str=None, ignore_watermarks: bool=None, ocr_engine: str=None, resize_candidate: bool=False, blur: bool=False , threshold: float =None ,**kwargs):
+    def compare_images(self, reference_image: str, test_image: str, placeholder_file: str=None, mask: Union[str, dict, list]=None, check_text_content: bool=False, move_tolerance: int=None, contains_barcodes: bool=False, get_pdf_content: bool=False, force_ocr: bool=False, DPI: int=None, watermark_file: str=None, ignore_watermarks: bool=None, ocr_engine: str=None, resize_candidate: bool=False, blur: bool=False, threshold: float =None, pages=None, **kwargs):
         """Compares the documents/images ``reference_image`` and ``test_image``.
 
         Result is passed if no visual differences are detected.
@@ -111,6 +111,7 @@ class VisualTest(object):
         | ``resize_candidate`` | Allow visual comparison, even of documents have different sizes |
         | ``blur`` | Blur the image before comparison to reduce visual difference caused by noise |
         | ``threshold`` | Threshold for visual comparison between 0.0000 and 1.0000 . Default is 0.0000. Higher values mean more tolerance for visual differences. |
+        | ``pages`` | Use ``minim_equal`` to leave mismatch number of pages out of comparison operation. Default is None. |
         | ``**kwargs`` | Everything else |
         
 
@@ -180,12 +181,12 @@ class VisualTest(object):
             raise AssertionError(
                 'The candidate file does not exist: {}'.format(test_image))
 
-        reference_compare_image = CompareImage(reference_image, placeholder_file=placeholder_file, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, force_ocr=force_ocr, mask=mask, ocr_engine=ocr_engine)
-        candidate_compare_image = CompareImage(test_image, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI)
-
+        reference_compare_image = CompareImage(reference_image, placeholder_file=placeholder_file, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, force_ocr=force_ocr, mask=mask, ocr_engine=ocr_engine, **kwargs)
+        candidate_compare_image = CompareImage(test_image, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, **kwargs)
 
         tic = time.perf_counter()
         if reference_compare_image.placeholders != []:
+            logging.debug("Placeholders found...")
             candidate_compare_image.placeholders = reference_compare_image.placeholders
             reference_collection = reference_compare_image.get_image_with_placeholders()
             compare_collection = candidate_compare_image.get_image_with_placeholders()
@@ -193,6 +194,13 @@ class VisualTest(object):
         else:
             reference_collection = reference_compare_image.opencv_images
             compare_collection = candidate_compare_image.opencv_images
+
+        if pages is not None:
+            if pages == "minim_equal":
+                min_len = min(len(reference_collection), len(compare_collection))
+                logging.debug(f"Minim len: {min_len}")
+                reference_collection = reference_collection[:min_len]
+                compare_collection = compare_collection[:min_len]
 
         if len(reference_collection) != len(compare_collection):
             print("Pages in reference file:{}. Pages in candidate file:{}".format(
@@ -209,7 +217,6 @@ class VisualTest(object):
                     compare_collection[i], "_candidate_page_" + str(i+1))
             raise AssertionError(
                 'Reference File and Candidate File have different number of pages')
-        
         for i, (reference, candidate) in enumerate(zip(reference_collection, compare_collection)):
             if get_pdf_content:
                 try:
@@ -221,7 +228,10 @@ class VisualTest(object):
             else:
                 reference_pdf_content = None
                 candidate_pdf_content = None
-            self.check_for_differences(reference, candidate, i, detected_differences, compare_options, reference_pdf_content, candidate_pdf_content)
+            try:
+                self.check_for_differences(reference, candidate, i, detected_differences, compare_options, reference_pdf_content, candidate_pdf_content)
+            except:
+                detected_differences.append(True)
         if reference_compare_image.barcodes != []:
             if reference_compare_image.barcodes != candidate_compare_image.barcodes:
                 detected_differences.append(True)
@@ -475,6 +485,12 @@ class VisualTest(object):
 
         grayA = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
         grayB = cv2.cvtColor(candidate, cv2.COLOR_BGR2GRAY)
+        hsvA = cv2.cvtColor(reference, cv2.COLOR_BGR2HSV)
+        hsvB = cv2.cvtColor(candidate, cv2.COLOR_BGR2HSV)
+        # self.add_screenshot_to_log(
+        #             grayA, "_reference_page_" + str(i+1))
+        # self.add_screenshot_to_log(
+        #             grayB, "_reference_page_" + str(i+1))
 
         # Blur images if blur=True
         if compare_options['blur']:
@@ -488,8 +504,13 @@ class VisualTest(object):
             # Not necessary to take screenshots for every successful comparison
             self.add_screenshot_to_log(np.concatenate(
                 (reference, candidate), axis=1), "_page_" + str(i+1) + "_compare_concat")
-        
+            # self.add_screenshot_to_log(np.concatenate(
+            #     (grayA, grayB), axis=1), "_page_" + str(i+1) + "_compare_concat")
+            # self.add_screenshot_to_log(np.concatenate(
+            #     (hsvA, hsvB), axis=1), "_page_" + str(i+1) + "_compare_concat")
+        color_diff = cv2.absdiff(reference, candidate)
         absolute_diff = cv2.absdiff(grayA, grayB)
+        logging.debug(f"absolute_diff: {np.sum(absolute_diff)}, color_diff: {np.sum(color_diff)}")
         #if absolute difference is 0, images are equal
         if np.sum(absolute_diff) == 0:
             return
@@ -499,6 +520,7 @@ class VisualTest(object):
         (score, diff) = metrics.structural_similarity(
             grayA, grayB, gaussian_weights=True, full=True)
         score = abs(1-score)
+        logging.debug(score)
 
         if (score > compare_options['threshold']):
 
@@ -506,6 +528,7 @@ class VisualTest(object):
 
             thresh = cv2.threshold(diff, 0, 255,
                                    cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+            # thresh = cv2.adaptiveThreshold(diff, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 4)
             absolute_diff = cv2.absdiff(grayA, grayB)
             reference_with_rect, candidate_with_rect, cnts = self.get_images_with_highlighted_differences(
                 thresh, reference.copy(), candidate.copy(), extension=int(os.getenv('EXTENSION', 2)))
@@ -836,7 +859,7 @@ class VisualTest(object):
 
         """
 
-        img = CompareImage(image)
+        img = CompareImage(image, ocr_lang=ocr_lang)
         if img.extension == '.pdf':
             text = []
             for i in range(len(img.opencv_images)):
