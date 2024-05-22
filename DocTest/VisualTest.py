@@ -56,7 +56,7 @@ class VisualTest(object):
 
         Those arguments will be taken as default, but some can be overwritten in the keywords.
         """
-        
+
         self.threshold = threshold
         self.SCREENSHOT_DIRECTORY = Path("screenshots/")
         self.DPI = int(DPI)
@@ -89,7 +89,7 @@ class VisualTest(object):
             self.PABOTQUEUEINDEX = None
 
     @keyword
-    def compare_images(self, reference_image: str, test_image: str, placeholder_file: str=None, mask: Union[str, dict, list]=None, check_text_content: bool=False, move_tolerance: int=None, contains_barcodes: bool=False, get_pdf_content: bool=False, force_ocr: bool=False, DPI: int=None, watermark_file: str=None, ignore_watermarks: bool=None, ocr_engine: str=None, resize_candidate: bool=False, blur: bool=False, threshold: float =None, pages=None, **kwargs):
+    def compare_images(self, reference_image: str, test_image: str, placeholder_file: str=None, mask: Union[str, dict, list]=None, check_text_content: bool=False, move_tolerance: int=None, contains_barcodes: bool=False, get_pdf_content: bool=False, force_ocr: bool=False, DPI: int=None, watermark_file: str=None, ignore_watermarks: bool=None, ocr_engine: str=None, resize_candidate: bool=False, blur: bool=False, threshold: float =None, pages=None, compare_color=None, **kwargs):
         """Compares the documents/images ``reference_image`` and ``test_image``.
 
         Result is passed if no visual differences are detected.
@@ -113,7 +113,7 @@ class VisualTest(object):
         | ``threshold`` | Threshold for visual comparison between 0.0000 and 1.0000 . Default is 0.0000. Higher values mean more tolerance for visual differences. |
         | ``pages`` | Use ``minim_equal`` to leave mismatch number of pages out of comparison operation. Default is None. |
         | ``**kwargs`` | Everything else |
-        
+
 
         Examples:
         | `Compare Images`   reference.pdf   candidate.pdf                                  #Performs a pixel comparison of both files
@@ -126,7 +126,7 @@ class VisualTest(object):
         | `Compare Images`   reference.pdf   candidate.pdf   watermark_file=watermark.pdf     #Provides a watermark file as an argument. In case of visual differences, watermark content will be subtracted
         | `Compare Images`   reference.pdf   candidate.pdf   watermark_file=${CURDIR}${/}watermarks     #Provides a watermark folder as an argument. In case of visual differences, all watermarks in folder will be subtracted
         | `Compare Images`   reference.pdf   candidate.pdf   move_tolerance=10   get_pdf_content=${true}   #In case of visual differences, it is checked if difference is caused only by moved areas. Move distance is identified directly from PDF data. If the move distance is within 10 pixels the test is considered as passed. Else it is failed
-        
+
         Special Examples with ``mask``:
         | `Compare Images`   reference.pdf   candidate.pdf   mask={"page": "all", type: "coordinate", "x": 0, "y": 0, "width": 100, "height": 100}     #Excludes a rectangle from comparison
 
@@ -229,7 +229,7 @@ class VisualTest(object):
                 reference_pdf_content = None
                 candidate_pdf_content = None
             try:
-                self.check_for_differences(reference, candidate, i, detected_differences, compare_options, reference_pdf_content, candidate_pdf_content)
+                self.check_for_differences(reference, candidate, i, detected_differences, compare_options, reference_pdf_content, candidate_pdf_content, compare_color)
             except:
                 detected_differences.append(True)
         if reference_compare_image.barcodes != []:
@@ -315,14 +315,14 @@ class VisualTest(object):
 
         if detection == "template":
             result = self.find_partial_image_distance_with_matchtemplate(img, template, threshold)
-            
+
         elif detection == "classic":
             result = self.find_partial_image_distance_with_classic_method(img, template, threshold)
-            
+
         elif detection == "orb":
             result = self.find_partial_image_distance_with_orb(img, template)
 
-        return result 
+        return result
 
     def find_partial_image_distance_with_classic_method(self, img, template, threshold=0.1):
         print("Find partial image position")
@@ -398,7 +398,7 @@ class VisualTest(object):
                 edgeThreshold = int(patchSize/2)
                 return self.get_orb_keypoints_and_descriptors(img1, img2, edgeThreshold, patchSize)
             else:
-                return None, None, None, None    
+                return None, None, None, None
 
         return img1_kp, img1_des, img2_kp, img2_des
 
@@ -459,7 +459,6 @@ class VisualTest(object):
             # Draw the matches on the target image
             # result = cv2.drawMatches(masked_template, template_keypoints, masked_img, target_keypoints, matches[:10], None, flags=cv2.DRAW_MATCHES_FLAGS_NOT_DRAW_SINGLE_POINTS)
 
-    
     def overlay_two_images(self, image, overlay, ignore_color=[255, 255, 255]):
         ignore_color = np.asarray(ignore_color)
         mask = ~(overlay == ignore_color).all(-1)
@@ -468,7 +467,21 @@ class VisualTest(object):
         out[mask] = image[mask] * 0.5 + overlay[mask] * 0.5
         return out
 
-    def check_for_differences(self, reference, candidate, i, detected_differences, compare_options, reference_pdf_content=None, candidate_pdf_content=None):
+    def create_color_mask(self, image):
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        result = image.copy()
+        lower1 = np.array([0,27,0])
+        upper1 = np.array([179,255,255])
+        lower2 = np.array([0,200,0])
+        upper2 = np.array([179,255,255])
+        mask1 = cv2.inRange(image, lower1, upper1)
+        mask2 = cv2.inRange(image, lower2, upper2)
+        # Combine the masks
+        mask = cv2.bitwise_or(mask1, mask2)
+        result = cv2.bitwise_and(result, result, mask=mask)
+        return result
+
+    def check_for_differences(self, reference, candidate, i, detected_differences, compare_options, reference_pdf_content=None, candidate_pdf_content=None, compare_color=None):
         images_are_equal = True
 
         if reference.shape[0] != candidate.shape[0] or reference.shape[1] != candidate.shape[1]:
@@ -485,12 +498,6 @@ class VisualTest(object):
 
         grayA = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
         grayB = cv2.cvtColor(candidate, cv2.COLOR_BGR2GRAY)
-        hsvA = cv2.cvtColor(reference, cv2.COLOR_BGR2HSV)
-        hsvB = cv2.cvtColor(candidate, cv2.COLOR_BGR2HSV)
-        # self.add_screenshot_to_log(
-        #             grayA, "_reference_page_" + str(i+1))
-        # self.add_screenshot_to_log(
-        #             grayB, "_reference_page_" + str(i+1))
 
         # Blur images if blur=True
         if compare_options['blur']:
@@ -499,26 +506,47 @@ class VisualTest(object):
             kernel_size += kernel_size%2-1
             grayA = cv2.GaussianBlur(grayA, (kernel_size, kernel_size), 1.5)
             grayB = cv2.GaussianBlur(grayB, (kernel_size, kernel_size), 1.5)
-        
+
         if self.take_screenshots:
             # Not necessary to take screenshots for every successful comparison
             self.add_screenshot_to_log(np.concatenate(
                 (reference, candidate), axis=1), "_page_" + str(i+1) + "_compare_concat")
             # self.add_screenshot_to_log(np.concatenate(
             #     (grayA, grayB), axis=1), "_page_" + str(i+1) + "_compare_concat")
-            # self.add_screenshot_to_log(np.concatenate(
-            #     (hsvA, hsvB), axis=1), "_page_" + str(i+1) + "_compare_concat")
         color_diff = cv2.absdiff(reference, candidate)
         absolute_diff = cv2.absdiff(grayA, grayB)
         logging.debug(f"absolute_diff: {np.sum(absolute_diff)}, color_diff: {np.sum(color_diff)}")
         #if absolute difference is 0, images are equal
         if np.sum(absolute_diff) == 0:
-            return
+            if not compare_color:
+                return
+            if np.sum(color_diff) == 0:
+                return
 
         # compute the Structural Similarity Index (SSIM) between the two
         # images, ensuring that the difference image is returned
-        (score, diff) = metrics.structural_similarity(
-            grayA, grayB, gaussian_weights=True, full=True)
+        if compare_color:
+            logging.debug("Comparing color...")
+            ref_result = self.create_color_mask(reference)
+            cand_result = self.create_color_mask(candidate)
+            # Compute the absolute difference between the masked images
+            color_difference = cv2.absdiff(ref_result, cand_result)
+
+            self.add_screenshot_to_log(color_difference, "_page_" + str(i+1) + "_color_differences")
+            grayA2 = cv2.cvtColor(ref_result, cv2.COLOR_BGR2GRAY)
+            grayB2 = cv2.cvtColor(cand_result, cv2.COLOR_BGR2GRAY)
+            # Compute SSIM for color differences
+            (score_color, diff_color) = metrics.structural_similarity(
+                grayA2, grayB2, gaussian_weights=True, full=True)
+            # Compute SSIM for text/other differences
+            (score_text, diff_text) = metrics.structural_similarity(
+                grayA, grayB, gaussian_weights=True, full=True)
+            score = (score_color + score_text) / 2
+            diff = (diff_color + diff_text) / 2
+        else:
+            (score, diff) = metrics.structural_similarity(
+                grayA, grayB, gaussian_weights=True, full=True)
+
         score = abs(1-score)
         logging.debug(score)
 
@@ -585,7 +613,7 @@ class VisualTest(object):
                                 watermark_gray = cv2.cvtColor(
                                     watermark, cv2.COLOR_BGR2GRAY)
                                 #watermark_gray = (watermark_gray * 255).astype("uint8")
-                                mask = cv2.threshold(watermark_gray, 10, 255, cv2.THRESH_BINARY)[1]   
+                                mask = cv2.threshold(watermark_gray, 10, 255, cv2.THRESH_BINARY)[1]
                                 # Check if width or height of mask and reference are not equal
                                 if (mask.shape[0] != reference.shape[0] or mask.shape[1] != reference.shape[1]):
                                     # Resize mask to match thresh
@@ -906,7 +934,7 @@ class VisualTest(object):
         | ${barcodes} | `Get Barcodes From Document` | reference.jpg | return_type=all | #Gets Barcode Values and Coordinates as list `[values, coordinates]` |
 
         """
-            
+
         img = CompareImage(image)
         img.identify_barcodes()
         if img.barcodes is None:
@@ -926,18 +954,18 @@ class VisualTest(object):
         return barcodes
 
     @keyword
-    def image_should_contain_template(self, image: str, template: str, threshold: float=0.0, 
-                                      take_screenshots: bool=False, log_template: bool=False, 
+    def image_should_contain_template(self, image: str, template: str, threshold: float=0.0,
+                                      take_screenshots: bool=False, log_template: bool=False,
                                       detection: str="template",
                                       tpl_crop_x1: int = None, tpl_crop_y1: int = None,
                                       tpl_crop_x2: int = None, tpl_crop_y2: int = None):
-        """Verifies that ``image`` contains a ``template``.  
+        """Verifies that ``image`` contains a ``template``.
 
-        Returns the coordinates of the template in the image if the template is found.  
-        Can be used to find a smaller image ``template`` in a larger image ``image``.  
-        ``image`` and ``template`` can be either a path to an image or a url.  
-        The ``threshold`` can be used to set the minimum similarity between the two images.  
-        If ``take_screenshots`` is set to ``True``, screenshots of the image with the template highlighted are added to the log.  
+        Returns the coordinates of the template in the image if the template is found.
+        Can be used to find a smaller image ``template`` in a larger image ``image``.
+        ``image`` and ``template`` can be either a path to an image or a url.
+        The ``threshold`` can be used to set the minimum similarity between the two images.
+        If ``take_screenshots`` is set to ``True``, screenshots of the image with the template highlighted are added to the log.
 
         | =Arguments= | =Description= |
         | ``image`` | Path of the Image/Document in which the template shall be found |
@@ -984,7 +1012,7 @@ class VisualTest(object):
             if min_val <= threshold:
                 match = True
                 cv2.rectangle(img, top_left, bottom_right, 255, 2)
-            
+
             if take_screenshots:
                 self.add_screenshot_to_log(img, "image_with_template")
 
