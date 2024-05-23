@@ -181,16 +181,17 @@ class VisualTest(object):
             raise AssertionError(
                 'The candidate file does not exist: {}'.format(test_image))
 
-        reference_compare_image = CompareImage(reference_image, placeholder_file=placeholder_file, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, force_ocr=force_ocr, mask=mask, ocr_engine=ocr_engine, **kwargs)
-        candidate_compare_image = CompareImage(test_image, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, **kwargs)
+        reference_compare_image = CompareImage(reference_image, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, force_ocr=force_ocr, mask=mask, ocr_engine=ocr_engine, **kwargs)
+        candidate_compare_image = CompareImage(test_image, placeholder_file=placeholder_file, contains_barcodes=contains_barcodes, get_pdf_content=get_pdf_content, DPI=self.DPI, **kwargs)
 
         tic = time.perf_counter()
-        if reference_compare_image.placeholders != []:
+        if candidate_compare_image.placeholders != []:
             logging.debug("Placeholders found...")
-            candidate_compare_image.placeholders = reference_compare_image.placeholders
+            reference_compare_image.placeholders = candidate_compare_image.placeholders
             reference_collection = reference_compare_image.get_image_with_placeholders()
             compare_collection = candidate_compare_image.get_image_with_placeholders()
-            logging.debug("OCR Data: {}".format(reference_compare_image.text_content))
+            logging.debug("Ref OCR Data: {}".format(reference_compare_image.text_content))
+            logging.debug("Cand OCR Data: {}".format(candidate_compare_image.text_content))
         else:
             reference_collection = reference_compare_image.opencv_images
             compare_collection = candidate_compare_image.opencv_images
@@ -498,6 +499,8 @@ class VisualTest(object):
 
         grayA = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
         grayB = cv2.cvtColor(candidate, cv2.COLOR_BGR2GRAY)
+        grayA = cv2.equalizeHist(grayA)
+        grayB = cv2.equalizeHist(grayB)
 
         # Blur images if blur=True
         if compare_options['blur']:
@@ -532,12 +535,14 @@ class VisualTest(object):
             # Compute the absolute difference between the masked images
             color_difference = cv2.absdiff(ref_result, cand_result)
 
-            self.add_screenshot_to_log(color_difference, "_page_" + str(i+1) + "_color_differences")
-            grayA2 = cv2.cvtColor(ref_result, cv2.COLOR_BGR2GRAY)
-            grayB2 = cv2.cvtColor(cand_result, cv2.COLOR_BGR2GRAY)
+            grayA_c = cv2.cvtColor(ref_result, cv2.COLOR_BGR2GRAY)
+            grayB_c = cv2.cvtColor(cand_result, cv2.COLOR_BGR2GRAY)
             # Compute SSIM for color differences
             (score_color, diff_color) = metrics.structural_similarity(
-                grayA2, grayB2, gaussian_weights=True, full=True)
+                grayA_c, grayB_c, gaussian_weights=True, full=True)
+            if score_color < 1:
+                logging.info("Color differences found. Logging additional screenshot displaying simply color differences")
+                self.add_screenshot_to_log(color_difference, "_page_" + str(i+1) + "_color_differences")
             # Compute SSIM for text/other differences
             (score_text, diff_text) = metrics.structural_similarity(
                 grayA, grayB, gaussian_weights=True, full=True)
@@ -551,6 +556,7 @@ class VisualTest(object):
         logging.debug(score)
 
         if (score > compare_options['threshold']):
+            logging.debug(f"Options threshold: {compare_options['threshold']}")
 
             diff = (diff * 255).astype("uint8")
 
